@@ -1,0 +1,13 @@
+fastapi>=0.104.0
+uvicorn>=0.23.2
+pydantic>=2.4.2
+psycopg2-binary>=2.9.9
+asyncpg>=0.28.0
+langchain>=0.0.311
+langchain-core>=0.1.8,<0.2.0
+langgraph>=0.0.17
+sqlglot>=19.9.0
+openai>=1.1.0
+python-dotenv>=1.0.0
+pytest>=7.4.3
+pytest-asyncio>=0.21.1

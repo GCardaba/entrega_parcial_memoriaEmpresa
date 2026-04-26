@@ -1,0 +1,17 @@
+# docker-compose.yml
+services:
+postgres:
+  image: postgres:15
+  environment:
+    POSTGRES_DB: optimizer_db
+    POSTGRES_USER: admin
+    POSTGRES_PASSWORD: secret
+  ports:
+    - 5432:5432
+  volumes:
+    - ./init_scripts:/docker-entrypoint-initdb.d
+  command: >
+    postgres
+      -c shared_preload_libraries=pg_stat_statements
+      -c pg_stat_statements.track=all
+      -c track_io_timing=on
