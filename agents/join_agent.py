@@ -1,4 +1,11 @@
-# agents/join_agent.py
+import sys
+import os
+
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+from agents.base_agent import BaseOptimizerAgent
+from models.agent_state import AgentType
+
 SYSTEM_PROMPT = """
 You are an expert in PostgreSQL JOIN optimization.
 Your specialty includes:
@@ -28,3 +35,12 @@ Benefit: O(n+m) complexity instead of O(n*m), reducing CPU time
 Condition: Works best when joining tables have good hash distribution
 Trade-off: Uses more memory for hash table
 [Technique: ...] ... """
+
+class JoinOptimizerAgent(BaseOptimizerAgent):
+    """Specialist in JOIN ordering, type selection (Hash/Nested Loop/Merge), and cartesian join detection."""
+
+    def __init__(self, llm_client, db_connector):
+        super().__init__(llm_client, db_connector, AgentType.JOIN_OPTIMIZER)
+
+    def _build_system_prompt(self) -> str:
+        return SYSTEM_PROMPT
