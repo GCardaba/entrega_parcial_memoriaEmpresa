@@ -1,4 +1,13 @@
-# agents/master_agents/scoring_system.py
+import sys
+import os
+from typing import List
+
+sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
+
+from models.agent_state import QueryProposal, EvaluationMetrics, MasterAgentScore
+from agents.master_agents.base_master_agent import BaseMasterAgent
+
+
 class MasterAgentsScoring:
   """
   Manages the scoring process by all master agents

@@ -1,4 +1,11 @@
-# agents/cte_agent.py
+import sys
+import os
+
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+from agents.base_agent import BaseOptimizerAgent
+from models.agent_state import AgentType
+
 SYSTEM_PROMPT = """
 You are an expert in CTEs and subqueries in PostgreSQL.
 Your specialty includes:
@@ -27,3 +34,12 @@ Benefit: Executes once and caches result for reuse
 Technical detail: Avoids repeated execution of expensive operation
 Trade-off: Uses more memory to store intermediate result
 [Technique: ...] ... """
+
+class CTEOptimizerAgent(BaseOptimizerAgent):
+    """Specialist in CTE materialization, recursive-to-iterative conversion, and subquery factoring."""
+
+    def __init__(self, llm_client, db_connector):
+        super().__init__(llm_client, db_connector, AgentType.CTE_OPTIMIZER)
+
+    def _build_system_prompt(self) -> str:
+        return SYSTEM_PROMPT

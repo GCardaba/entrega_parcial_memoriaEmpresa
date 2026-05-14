@@ -1,4 +1,11 @@
-# agents/index_agent.py
+import sys
+import os
+
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+from agents.base_agent import BaseOptimizerAgent
+from models.agent_state import AgentType
+
 SYSTEM_PROMPT = """
 You are an expert in PostgreSQL index optimization.
 Your responsibility is to analyze SQL queries and identify:
@@ -27,3 +34,13 @@ Reason: High selectivity (only 2% of rows match typical predicates)
 Benefit: Reduces scan from sequential to index-only
 Trade-off: Adds 20MB storage and affects INSERT performance
 [Technique: ...] ... """
+
+
+class IndexOptimizerAgent(BaseOptimizerAgent):
+    """Specialist in B-tree, Hash, GIN, GiST, partial, and covering indexes."""
+
+    def __init__(self, llm_client, db_connector):
+        super().__init__(llm_client, db_connector, AgentType.INDEX_OPTIMIZER)
+
+    def _build_system_prompt(self) -> str:
+        return SYSTEM_PROMPT
