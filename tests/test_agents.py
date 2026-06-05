@@ -99,17 +99,15 @@ async def test_invalid_llm_output_falls_back_to_original(db, simple_query):
     bad_sql = "THIS IS NOT VALID SQL AT ALL !!!"
     fix_response = json.dumps({"fixed_query": bad_sql})  # fix also invalid
 
-    class BrokenChatCompletions:
+    class BrokenMessages:
         async def create(self, messages, **kwargs):
-            class Choice:
-                message = types.SimpleNamespace(content=fix_response)
-            class Comp:
-                choices = [Choice()]
-            return Comp()
+            return types.SimpleNamespace(
+                content=[types.SimpleNamespace(text=fix_response)]
+            )
 
     class BrokenLLM:
         def __init__(self):
-            self.chat = types.SimpleNamespace(completions=BrokenChatCompletions())
+            self.messages = BrokenMessages()
 
     # Patch _call_llm to return garbage JSON
     from agents.index_agent import IndexOptimizerAgent

@@ -9,7 +9,7 @@ from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 from typing import Optional, Dict, Any
 import uvicorn
-from openai import AsyncOpenAI
+from anthropic import AsyncAnthropic
 
 from database.connector import PostgreSQLConnector
 from orchestrator.workflow import build_optimization_workflow
@@ -27,10 +27,10 @@ app = FastAPI(
 db_connector = PostgreSQLConnector()
 
 def _get_llm():
-    api_key = os.getenv("OPENAI_API_KEY")
+    api_key = os.getenv("ANTHROPIC_API_KEY")
     if not api_key:
-        raise RuntimeError("OPENAI_API_KEY not set in environment")
-    return AsyncOpenAI(api_key=api_key)
+        raise RuntimeError("ANTHROPIC_API_KEY not set in environment")
+    return AsyncAnthropic(api_key=api_key)
 
 
 # ---------------------------------------------------------------------------

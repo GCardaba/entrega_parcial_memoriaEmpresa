@@ -12,8 +12,8 @@ DB_PASSWORD = os.getenv("DB_PASSWORD", "practicas")
 DB_SCHEMA = os.getenv("DB_SCHEMA", "tpch")
 
 # LLM
-OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "")
-LLM_MODEL = os.getenv("LLM_MODEL", "gpt-4o")
+ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY", "")
+LLM_MODEL = os.getenv("LLM_MODEL", "claude-sonnet-4-6")
 LLM_TEMPERATURE_OPTIMIZE = float(os.getenv("LLM_TEMPERATURE_OPTIMIZE", "0.2"))
 LLM_TEMPERATURE_SCORE = float(os.getenv("LLM_TEMPERATURE_SCORE", "0.1"))
 
