@@ -87,16 +87,14 @@ class BaseOptimizerAgent(ABC):
     # ------------------------------------------------------------------
 
     async def _call_llm(self, user_message: str) -> str:
-        response = await self.llm.chat.completions.create(
-            model="gpt-4o",
-            messages=[
-                {"role": "system", "content": self.system_prompt},
-                {"role": "user", "content": user_message},
-            ],
-            response_format={"type": "json_object"},
+        response = await self.llm.messages.create(
+            model="claude-sonnet-4-6",
+            max_tokens=4096,
+            system=self.system_prompt,
+            messages=[{"role": "user", "content": user_message}],
             temperature=0.2,
         )
-        return response.choices[0].message.content
+        return response.content[0].text
 
     # ------------------------------------------------------------------
     # Context preparation
@@ -210,16 +208,14 @@ ERROR FROM POSTGRESQL:
 Respond with a single JSON object:
 {{"fixed_query": "<corrected SQL query>"}}
 """
-        response = await self.llm.chat.completions.create(
-            model="gpt-4o",
-            messages=[
-                {"role": "system", "content": "You are a PostgreSQL SQL syntax expert."},
-                {"role": "user", "content": fix_prompt},
-            ],
-            response_format={"type": "json_object"},
+        response = await self.llm.messages.create(
+            model="claude-sonnet-4-6",
+            max_tokens=1024,
+            system="You are a PostgreSQL SQL syntax expert.",
+            messages=[{"role": "user", "content": fix_prompt}],
             temperature=0.0,
         )
-        data = json.loads(response.choices[0].message.content)
+        data = json.loads(response.content[0].text)
         return data.get("fixed_query", bad_query)
 
     # ------------------------------------------------------------------

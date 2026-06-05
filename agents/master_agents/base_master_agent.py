@@ -70,18 +70,15 @@ Respond ONLY with valid JSON in this exact format:
   "confidence_score": <float 0.0-1.0>
 }}
 """
-        response = await self.llm.chat.completions.create(
-            model="gpt-4o",
-            messages=[
-                {"role": "system", "content": self.system_prompt},
-                {"role": "user", "content": user_message},
-            ],
-            response_format={"type": "json_object"},
+        import json
+        response = await self.llm.messages.create(
+            model="claude-sonnet-4-6",
+            max_tokens=4096,
+            system=self.system_prompt,
+            messages=[{"role": "user", "content": user_message}],
             temperature=0.2,
         )
-
-        import json
-        data = json.loads(response.choices[0].message.content)
+        data = json.loads(response.content[0].text)
 
         explanations = [
             OptimizationExplanation(
@@ -161,18 +158,15 @@ Consider: performance gain, plan efficiency, semantic correctness, optimization 
 Respond ONLY with valid JSON:
 {{"score": <float 0-10>, "reasoning": "<2-3 sentence explanation of the score>"}}
 """
-        response = await self.llm.chat.completions.create(
-            model="gpt-4o",
-            messages=[
-                {"role": "system", "content": self.system_prompt},
-                {"role": "user", "content": user_message},
-            ],
-            response_format={"type": "json_object"},
+        import json
+        response = await self.llm.messages.create(
+            model="claude-sonnet-4-6",
+            max_tokens=512,
+            system=self.system_prompt,
+            messages=[{"role": "user", "content": user_message}],
             temperature=0.1,
         )
-
-        import json
-        data = json.loads(response.choices[0].message.content)
+        data = json.loads(response.content[0].text)
 
         return MasterAgentScore(
             master_agent_id=self.agent_id,

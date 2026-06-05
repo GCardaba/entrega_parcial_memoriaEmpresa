@@ -201,7 +201,7 @@ def make_score_response(score: float = 7.5) -> str:
     })
 
 
-class MockChatCompletions:
+class MockMessages:
     def __init__(self, score: float = 7.5):
         self._score = score
 
@@ -213,20 +213,14 @@ class MockChatCompletions:
             else make_optimizer_response()
         )
 
-        class Choice:
-            def __init__(self, c):
-                self.message = types.SimpleNamespace(content=c)
-
-        class Completion:
-            def __init__(self, c):
-                self.choices = [Choice(c)]
-
-        return Completion(content)
+        return types.SimpleNamespace(
+            content=[types.SimpleNamespace(text=content)]
+        )
 
 
 class MockLLM:
     def __init__(self, score: float = 7.5):
-        self.chat = types.SimpleNamespace(completions=MockChatCompletions(score))
+        self.messages = MockMessages(score)
 
 
 @pytest.fixture
