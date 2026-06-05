@@ -10,12 +10,21 @@ load_dotenv()
 
 
 class PostgreSQLConnector:
-    def __init__(self):
-        self.dbname = os.getenv("DB_NAME", "optimizer_db")
-        self.user = os.getenv("DB_USER", "optimizer_admin")
-        self.password = os.getenv("DB_PASSWORD", "practicas")
-        self.host = os.getenv("DB_HOST", "localhost")
-        self.port = int(os.getenv("DB_PORT", "5432"))
+    def __init__(
+        self,
+        host: str = None,
+        port: int = None,
+        database: str = None,
+        user: str = None,
+        password: str = None,
+        schema: str = None,
+    ):
+        self.dbname   = database or os.getenv("DB_NAME", "optimizer_db")
+        self.user     = user     or os.getenv("DB_USER", "optimizer_admin")
+        self.password = password or os.getenv("DB_PASSWORD", "practicas")
+        self.host     = host     or os.getenv("DB_HOST", "localhost")
+        self.port     = port     or int(os.getenv("DB_PORT", "5432"))
+        self.schema   = schema   or os.getenv("DB_SCHEMA", "tpch")
 
     async def _get_connection(self) -> asyncpg.Connection:
         return await asyncpg.connect(
