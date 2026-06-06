@@ -1,5 +1,6 @@
 import sys
 import os
+import re
 from abc import ABC, abstractmethod
 from typing import List
 
@@ -25,6 +26,19 @@ class BaseMasterAgent(ABC):
     @abstractmethod
     def _build_system_prompt(self) -> str:
         """Each master agent defines its combination and scoring strategy."""
+
+    def _parse_json(self, raw: str) -> dict:
+        """Strip markdown fences and parse JSON; falls back to regex extraction."""
+        import json
+        cleaned = re.sub(r"^```(?:json)?\s*", "", raw.strip(), flags=re.IGNORECASE)
+        cleaned = re.sub(r"\s*```$", "", cleaned.strip())
+        try:
+            return json.loads(cleaned)
+        except json.JSONDecodeError:
+            match = re.search(r"\{.*\}", cleaned, re.DOTALL)
+            if match:
+                return json.loads(match.group())
+            return {}
 
     async def combine_optimizations(
         self,
@@ -70,7 +84,6 @@ Respond ONLY with valid JSON in this exact format:
   "confidence_score": <float 0.0-1.0>
 }}
 """
-        import json
         response = await self.llm.messages.create(
             model="claude-sonnet-4-6",
             max_tokens=4096,
@@ -78,7 +91,7 @@ Respond ONLY with valid JSON in this exact format:
             messages=[{"role": "user", "content": user_message}],
             temperature=0.2,
         )
-        data = json.loads(response.content[0].text)
+        data = self._parse_json(response.content[0].text)
 
         explanations = [
             OptimizationExplanation(
@@ -158,7 +171,6 @@ Consider: performance gain, plan efficiency, semantic correctness, optimization 
 Respond ONLY with valid JSON:
 {{"score": <float 0-10>, "reasoning": "<2-3 sentence explanation of the score>"}}
 """
-        import json
         response = await self.llm.messages.create(
             model="claude-sonnet-4-6",
             max_tokens=512,
@@ -166,7 +178,7 @@ Respond ONLY with valid JSON:
             messages=[{"role": "user", "content": user_message}],
             temperature=0.1,
         )
-        data = json.loads(response.content[0].text)
+        data = self._parse_json(response.content[0].text)
 
         return MasterAgentScore(
             master_agent_id=self.agent_id,

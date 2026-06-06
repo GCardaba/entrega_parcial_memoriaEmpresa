@@ -123,18 +123,23 @@ async def score_proposals(state: dict, llm, db: PostgreSQLConnector) -> dict:
     baseline = EvaluationMetrics(**state["baseline_metrics"])
 
     async def score_one(ev: EvaluationResult) -> EvaluationResult:
-        scores = await asyncio.gather(*[
-            agent.score_proposal(ev.proposal, ev.metrics, baseline)
-            for agent in master_agents
-        ])
-        ev.master_agent_scores = list(scores)
+        # Score sequentially across master agents to stay within rate limits.
+        scores = []
+        for agent in master_agents:
+            s = await agent.score_proposal(ev.proposal, ev.metrics, baseline)
+            scores.append(s)
+        ev.master_agent_scores = scores
         # Trim mean: drop highest and lowest, average the rest
         sorted_scores = sorted(scores, key=lambda s: s.score)
         trimmed = sorted_scores[1:-1] if len(sorted_scores) > 2 else sorted_scores
         ev.final_score = sum(s.score for s in trimmed) / len(trimmed) if trimmed else 0.0
         return ev
 
-    scored = await asyncio.gather(*[score_one(ev) for ev in evaluations])
+    # Process evaluations sequentially to avoid rate-limit spikes (25 calls at once
+    # exceeds the 30k tokens/min cap on free tier accounts).
+    scored = []
+    for ev in evaluations:
+        scored.append(await score_one(ev))
     return {**state, "evaluations": [e.model_dump() for e in scored], "status": "scored"}
 
 

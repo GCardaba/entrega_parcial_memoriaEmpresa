@@ -231,7 +231,7 @@ if "result" in st.session_state:
     winner = report.get("winner") or {}
     comparison = report.get("comparison_table") or []
     explanations_list = report.get("explanations") or []
-    summary = report.get("summary") or {}
+    summary = report.get("summary") or ""   # plain text executive summary
     original_query = st.session_state.get("query_used", "")
     optimized_query = winner.get("optimized_query", "")
 
@@ -239,19 +239,18 @@ if "result" in st.session_state:
     st.subheader("📊 Resultados")
 
     # --- KPI row ---
+    metrics = winner.get("metrics") or {}
+    impr    = metrics.get("improvement_vs_original") or {}
+    time_delta = impr.get("actual_time_ms", "")   # already formatted as "+20.6%"
+
     k1, k2, k3, k4 = st.columns(4)
-    k1.metric("Query ganadora", f"Master Agent {winner.get('agent_id', '?')}")
+    k1.metric("Query ganadora", winner.get("agent_id", "?"))
     k2.metric("Score final", f"{winner.get('final_score', 0):.2f} / 10")
-    k3.metric(
-        "Tiempo original",
-        f"{summary.get('baseline_time_ms', 0):.1f} ms",
-    )
-    k4.metric(
-        "Tiempo optimizado",
-        f"{summary.get('winner_time_ms', 0):.1f} ms",
-        delta=f"{summary.get('time_improvement_pct', 0):+.1f}%",
-        delta_color="inverse",
-    )
+    k3.metric("Tiempo optimizado", f"{metrics.get('actual_time_ms', 0):.1f} ms", delta=time_delta, delta_color="inverse")
+    k4.metric("Confianza LLM", f"{winner.get('confidence_score', 0):.0%}")
+
+    if summary:
+        st.info(f"📋 {summary}")
 
     st.divider()
 
@@ -292,31 +291,33 @@ if "result" in st.session_state:
             import pandas as pd
             df = pd.DataFrame(comparison)
 
-            # Rename columns for display
             display_cols = {
+                "rank": "Rank",
                 "agent_id": "Master Agent",
                 "final_score": "Score final",
                 "actual_time_ms": "Tiempo (ms)",
+                "time_improvement_pct": "Mejora tiempo (%)",
                 "total_cost": "Coste planificador",
                 "seq_scans": "Seq scans",
                 "index_scans": "Index scans",
-                "optimization_strategy": "Estrategia",
             }
-            df_show = df.rename(columns=display_cols)[[c for c in display_cols.values() if c in df_show.columns or c in [display_cols[k] for k in df.columns]]]
             df_show = df.rename(columns={k: v for k, v in display_cols.items() if k in df.columns})
+            show_cols = [v for k, v in display_cols.items() if k in df.columns]
+            df_show = df_show[show_cols]
 
-            # Highlight winner row
             winner_id = winner.get("agent_id", "")
 
             def highlight_winner(row):
-                color = "background-color: #1e3a2f" if row.get("Master Agent") == winner_id or row.get("agent_id") == winner_id else ""
+                color = "background-color: #1e3a2f" if row.get("Master Agent") == winner_id else ""
                 return [color] * len(row)
 
-            numeric_cols = ["Score final", "Tiempo (ms)", "Coste planificador"]
-            format_dict = {}
-            for col in numeric_cols:
-                if col in df_show.columns:
-                    format_dict[col] = "{:.2f}"
+            format_dict = {
+                "Score final": "{:.2f}",
+                "Tiempo (ms)": "{:.1f}",
+                "Mejora tiempo (%)": "{:+.1f}",
+                "Coste planificador": "{:.1f}",
+            }
+            format_dict = {k: v for k, v in format_dict.items() if k in df_show.columns}
 
             st.dataframe(
                 df_show.style.apply(highlight_winner, axis=1).format(format_dict, na_rep="—"),
