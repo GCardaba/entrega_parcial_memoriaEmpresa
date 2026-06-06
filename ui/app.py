@@ -28,12 +28,33 @@ st.set_page_config(
     initial_sidebar_state="expanded",
 )
 
+# Reduce vertical gaps in the sidebar
+st.markdown("""
+<style>
+    section[data-testid="stSidebar"] [data-testid="stVerticalBlock"] {
+        gap: 0.25rem;
+    }
+    section[data-testid="stSidebar"] .stTextInput,
+    section[data-testid="stSidebar"] .stNumberInput,
+    section[data-testid="stSidebar"] .stPassword {
+        margin-bottom: -0.4rem;
+    }
+    section[data-testid="stSidebar"] h3 {
+        margin-top: 0.5rem;
+        margin-bottom: 0rem;
+    }
+    section[data-testid="stSidebar"] h1 {
+        margin-bottom: 0.25rem;
+    }
+</style>
+""", unsafe_allow_html=True)
+
 # ---------------------------------------------------------------------------
 # Demo queries
 # ---------------------------------------------------------------------------
 
 DEMO_QUERIES = {
-    "— Elige una query de ejemplo —": "",
+    "— Pick an example query —": "",
     "JOIN customer + orders (simple)": """\
 SELECT c.c_name, SUM(o.o_totalprice) AS total
 FROM tpch.customer c
@@ -42,7 +63,7 @@ WHERE c.c_mktsegment = 'BUILDING'
 GROUP BY c.c_name
 ORDER BY total DESC
 LIMIT 20""",
-    "Subconsulta correlacionada (part)": """\
+    "Correlated subquery (part)": """\
 SELECT p.p_name, p.p_retailprice
 FROM tpch.part p
 WHERE p.p_retailprice > (
@@ -74,27 +95,27 @@ ORDER BY l_returnflag, l_linestatus""",
 # ---------------------------------------------------------------------------
 
 with st.sidebar:
-    st.title("⚙️ Configuración")
+    st.title("⚙️ Settings")
 
     st.subheader("Anthropic")
     api_key = st.text_input(
         "ANTHROPIC_API_KEY",
         value=os.getenv("ANTHROPIC_API_KEY", ""),
         type="password",
-        help="Necesaria para que los agentes LLM funcionen.",
+        help="Required for the LLM agents to work.",
     )
 
     st.subheader("PostgreSQL")
     db_host = st.text_input("Host", value=os.getenv("DB_HOST", "localhost"))
-    db_port = st.number_input("Puerto", value=int(os.getenv("DB_PORT", "5432")), step=1)
-    db_name = st.text_input("Base de datos", value=os.getenv("DB_NAME", "optimizer_db"))
-    db_user = st.text_input("Usuario", value=os.getenv("DB_USER", "optimizer_admin"))
+    db_port = st.number_input("Port", value=int(os.getenv("DB_PORT", "5432")), step=1)
+    db_name = st.text_input("Database", value=os.getenv("DB_NAME", "optimizer_db"))
+    db_user = st.text_input("User", value=os.getenv("DB_USER", "optimizer_admin"))
     db_password = st.text_input(
-        "Contraseña",
+        "Password",
         value=os.getenv("DB_PASSWORD", "practicas"),
         type="password",
     )
-    db_schema = st.text_input("Schema TPC-H", value=os.getenv("DB_SCHEMA", "tpch"))
+    db_schema = st.text_input("TPC-H Schema", value=os.getenv("DB_SCHEMA", "tpch"))
 
     st.divider()
     st.caption("Multi-Agent SQL Optimizer · TFG 2025")
@@ -166,15 +187,15 @@ async def _run_pipeline(query: str, api_key: str, db_cfg: dict) -> dict:
 
 st.title("⚡ SQL Query Optimizer")
 st.caption(
-    "Sistema multi-agente: 5 agentes especializados → 5 master agents → "
-    "scoring trim-mean → query ganadora"
+    "Multi-agent system: 5 specialist agents → 5 master agents → "
+    "trim-mean scoring → winning query"
 )
 
 # --- Query input ---
 col_left, col_right = st.columns([2, 1])
 
 with col_right:
-    selected = st.selectbox("Cargar query de ejemplo", list(DEMO_QUERIES.keys()))
+    selected = st.selectbox("Load example query", list(DEMO_QUERIES.keys()))
 
 with col_left:
     if selected and DEMO_QUERIES[selected]:
@@ -183,21 +204,21 @@ with col_left:
         default_query = st.session_state.get("last_query", "")
 
     query_input = st.text_area(
-        "Query SQL a optimizar",
+        "SQL query to optimize",
         value=default_query,
         height=220,
         placeholder="SELECT ... FROM tpch.orders ...",
     )
 
-run_btn = st.button("🚀 Optimizar", type="primary", use_container_width=True)
+run_btn = st.button("🚀 Optimize", type="primary", use_container_width=True)
 
 # --- Validation ---
 if run_btn:
     if not api_key:
-        st.error("Introduce tu ANTHROPIC_API_KEY en la barra lateral.")
+        st.error("Please set your ANTHROPIC_API_KEY in the sidebar.")
         st.stop()
     if not query_input.strip():
-        st.error("Escribe o selecciona una query SQL.")
+        st.error("Enter or select a SQL query.")
         st.stop()
 
     st.session_state["last_query"] = query_input
@@ -210,7 +231,7 @@ if run_btn:
         "schema": db_schema,
     }
 
-    with st.spinner("Ejecutando pipeline multi-agente… (puede tardar 30-90 s con API real)"):
+    with st.spinner("Running multi-agent pipeline… (may take 30–90 s with a real API key)"):
         try:
             result = _run(
                 _run_pipeline(query_input.strip(), api_key, db_cfg)
@@ -218,7 +239,7 @@ if run_btn:
             st.session_state["result"] = result
             st.session_state["query_used"] = query_input.strip()
         except Exception as exc:
-            st.error(f"Error durante el pipeline: {exc}")
+            st.error(f"Pipeline error: {exc}")
             st.stop()
 
 # ---------------------------------------------------------------------------
@@ -231,23 +252,23 @@ if "result" in st.session_state:
     winner = report.get("winner") or {}
     comparison = report.get("comparison_table") or []
     explanations_list = report.get("explanations") or []
-    summary = report.get("summary") or ""   # plain text executive summary
+    summary = report.get("summary") or ""
     original_query = st.session_state.get("query_used", "")
     optimized_query = winner.get("optimized_query", "")
 
     st.divider()
-    st.subheader("📊 Resultados")
+    st.subheader("📊 Results")
 
     # --- KPI row ---
     metrics = winner.get("metrics") or {}
     impr    = metrics.get("improvement_vs_original") or {}
-    time_delta = impr.get("actual_time_ms", "")   # already formatted as "+20.6%"
+    time_delta = impr.get("actual_time_ms", "")
 
     k1, k2, k3, k4 = st.columns(4)
-    k1.metric("Query ganadora", winner.get("agent_id", "?"))
-    k2.metric("Score final", f"{winner.get('final_score', 0):.2f} / 10")
-    k3.metric("Tiempo optimizado", f"{metrics.get('actual_time_ms', 0):.1f} ms", delta=time_delta, delta_color="inverse")
-    k4.metric("Confianza LLM", f"{winner.get('confidence_score', 0):.0%}")
+    k1.metric("Winning query", winner.get("agent_id", "?"))
+    k2.metric("Final score", f"{winner.get('final_score', 0):.2f} / 10")
+    k3.metric("Optimized time", f"{metrics.get('actual_time_ms', 0):.1f} ms", delta=time_delta, delta_color="inverse")
+    k4.metric("LLM confidence", f"{winner.get('confidence_score', 0):.0%}")
 
     if summary:
         st.info(f"📋 {summary}")
@@ -255,37 +276,37 @@ if "result" in st.session_state:
     st.divider()
 
     tab_query, tab_compare, tab_explain, tab_raw = st.tabs(
-        ["🏆 Query optimizada", "📈 Comparativa agentes", "🔍 Explicaciones", "🗂️ JSON raw"]
+        ["🏆 Optimized query", "📈 Agent comparison", "🔍 Explanations", "🗂️ Raw JSON"]
     )
 
     # --- Tab 1: winning query + diff ---
     with tab_query:
         col_orig, col_opt = st.columns(2)
         with col_orig:
-            st.markdown("**Query original**")
+            st.markdown("**Original query**")
             st.code(original_query, language="sql")
         with col_opt:
-            st.markdown(f"**Query optimizada** — `{winner.get('agent_id', '')}`")
+            st.markdown(f"**Optimized query** — `{winner.get('agent_id', '')}`")
             st.code(optimized_query, language="sql")
 
         removed, added = _diff_lines(original_query, optimized_query)
         if added or removed:
-            with st.expander("Ver cambios (diff simplificado)"):
+            with st.expander("Show changes (simplified diff)"):
                 if added:
-                    st.markdown("**Líneas añadidas / modificadas:**")
+                    st.markdown("**Added / modified lines:**")
                     for line in sorted(added):
                         st.markdown(f"```+ {line}```")
                 if removed:
-                    st.markdown("**Líneas eliminadas / simplificadas:**")
+                    st.markdown("**Removed / simplified lines:**")
                     for line in sorted(removed):
                         st.markdown(f"```- {line}```")
 
-        st.markdown(f"**Estrategia:** {winner.get('optimization_strategy', '—')}")
-        st.markdown(f"**Confianza:** {winner.get('confidence_score', 0):.0%}")
+        st.markdown(f"**Strategy:** {winner.get('optimization_strategy', '—')}")
+        st.markdown(f"**Confidence:** {winner.get('confidence_score', 0):.0%}")
 
     # --- Tab 2: comparison table ---
     with tab_compare:
-        st.markdown("Cada fila es un master agent. La puntuación final es la media recortada (se descarta la mayor y la menor).")
+        st.markdown("Each row is a master agent. The final score is the trimmed mean (highest and lowest scores are dropped).")
 
         if comparison:
             import pandas as pd
@@ -294,10 +315,10 @@ if "result" in st.session_state:
             display_cols = {
                 "rank": "Rank",
                 "agent_id": "Master Agent",
-                "final_score": "Score final",
-                "actual_time_ms": "Tiempo (ms)",
-                "time_improvement_pct": "Mejora tiempo (%)",
-                "total_cost": "Coste planificador",
+                "final_score": "Final score",
+                "actual_time_ms": "Time (ms)",
+                "time_improvement_pct": "Time improvement (%)",
+                "total_cost": "Planner cost",
                 "seq_scans": "Seq scans",
                 "index_scans": "Index scans",
             }
@@ -312,10 +333,10 @@ if "result" in st.session_state:
                 return [color] * len(row)
 
             format_dict = {
-                "Score final": "{:.2f}",
-                "Tiempo (ms)": "{:.1f}",
-                "Mejora tiempo (%)": "{:+.1f}",
-                "Coste planificador": "{:.1f}",
+                "Final score": "{:.2f}",
+                "Time (ms)": "{:.1f}",
+                "Time improvement (%)": "{:+.1f}",
+                "Planner cost": "{:.1f}",
             }
             format_dict = {k: v for k, v in format_dict.items() if k in df_show.columns}
 
@@ -324,7 +345,7 @@ if "result" in st.session_state:
                 use_container_width=True,
             )
         else:
-            st.info("No hay datos de comparativa disponibles.")
+            st.info("No comparison data available.")
 
     # --- Tab 3: explanations ---
     with tab_explain:
@@ -332,16 +353,16 @@ if "result" in st.session_state:
             for i, exp in enumerate(explanations_list, 1):
                 risk = exp.get("risk_factor", 0)
                 risk_icon = "🟢" if risk < 0.3 else ("🟡" if risk < 0.6 else "🔴")
-                with st.expander(f"{i}. {exp.get('technique', 'Técnica')}  {risk_icon} riesgo {risk:.1f}"):
-                    st.markdown(f"**Motivo:** {exp.get('reason', '—')}")
-                    st.markdown(f"**Beneficio esperado:** {exp.get('expected_benefit', '—')}")
+                with st.expander(f"{i}. {exp.get('technique', 'Technique')}  {risk_icon} risk {risk:.1f}"):
+                    st.markdown(f"**Reason:** {exp.get('reason', '—')}")
+                    st.markdown(f"**Expected benefit:** {exp.get('expected_benefit', '—')}")
                     limitations = exp.get("limitations", [])
                     if limitations:
-                        st.markdown("**Limitaciones:**")
+                        st.markdown("**Limitations:**")
                         for lim in limitations:
                             st.markdown(f"- {lim}")
         else:
-            st.info("No hay explicaciones detalladas disponibles.")
+            st.info("No detailed explanations available.")
 
     # --- Tab 4: raw JSON ---
     with tab_raw:
