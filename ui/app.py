@@ -55,6 +55,8 @@ st.markdown("""
 
 DEMO_QUERIES = {
     "— Pick an example query —": "",
+
+    # ── Simple ───────────────────────────────────────────────────────────────
     "JOIN customer + orders (simple)": """\
 SELECT c.c_name, SUM(o.o_totalprice) AS total
 FROM tpch.customer c
@@ -63,6 +65,8 @@ WHERE c.c_mktsegment = 'BUILDING'
 GROUP BY c.c_name
 ORDER BY total DESC
 LIMIT 20""",
+
+    # ── Correlated subquery ───────────────────────────────────────────────────
     "Correlated subquery (part)": """\
 SELECT p.p_name, p.p_retailprice
 FROM tpch.part p
@@ -72,6 +76,8 @@ WHERE p.p_retailprice > (
     WHERE p2.p_type = p.p_type
 )
 ORDER BY p.p_retailprice DESC""",
+
+    # ── TPC-H benchmarks ─────────────────────────────────────────────────────
     "TPC-H Q1 — lineitem aggregation": """\
 SELECT
     l_returnflag,
@@ -88,6 +94,156 @@ FROM tpch.lineitem
 WHERE l_shipdate <= DATE '1998-12-01' - INTERVAL '90 day'
 GROUP BY l_returnflag, l_linestatus
 ORDER BY l_returnflag, l_linestatus""",
+
+    "TPC-H Q3 — shipping priority": """\
+SELECT
+    l.l_orderkey,
+    SUM(l.l_extendedprice * (1 - l.l_discount)) AS revenue,
+    o.o_orderdate,
+    o.o_shippriority
+FROM tpch.customer c
+JOIN tpch.orders o   ON c.c_custkey  = o.o_custkey
+JOIN tpch.lineitem l ON l.l_orderkey = o.o_orderkey
+WHERE c.c_mktsegment = 'BUILDING'
+  AND o.o_orderdate  < DATE '1995-03-15'
+  AND l.l_shipdate   > DATE '1995-03-15'
+GROUP BY l.l_orderkey, o.o_orderdate, o.o_shippriority
+ORDER BY revenue DESC, o.o_orderdate
+LIMIT 10""",
+
+    "TPC-H Q5 — local supplier volume": """\
+SELECT
+    n.n_name,
+    SUM(l.l_extendedprice * (1 - l.l_discount)) AS revenue
+FROM tpch.customer c
+JOIN tpch.orders   o ON c.c_custkey  = o.o_custkey
+JOIN tpch.lineitem l ON l.l_orderkey = o.o_orderkey
+JOIN tpch.supplier s ON l.l_suppkey  = s.s_suppkey
+JOIN tpch.nation   n ON s.s_nationkey = n.n_nationkey
+                     AND c.c_nationkey = n.n_nationkey
+JOIN tpch.region   r ON n.n_regionkey = r.r_regionkey
+WHERE r.r_name        = 'ASIA'
+  AND o.o_orderdate  >= DATE '1994-01-01'
+  AND o.o_orderdate   < DATE '1994-01-01' + INTERVAL '1 year'
+GROUP BY n.n_name
+ORDER BY revenue DESC""",
+
+    "TPC-H Q7 — volume shipping between nations": """\
+SELECT
+    supp_nation,
+    cust_nation,
+    l_year,
+    SUM(volume) AS revenue
+FROM (
+    SELECT
+        n1.n_name                                         AS supp_nation,
+        n2.n_name                                         AS cust_nation,
+        EXTRACT(YEAR FROM l.l_shipdate)                   AS l_year,
+        l.l_extendedprice * (1 - l.l_discount)            AS volume
+    FROM tpch.supplier s
+    JOIN tpch.lineitem l ON l.l_suppkey  = s.s_suppkey
+    JOIN tpch.orders   o ON o.o_orderkey = l.l_orderkey
+    JOIN tpch.customer c ON c.c_custkey  = o.o_custkey
+    JOIN tpch.nation  n1 ON s.s_nationkey = n1.n_nationkey
+    JOIN tpch.nation  n2 ON c.c_nationkey = n2.n_nationkey
+    WHERE (
+        (n1.n_name = 'FRANCE' AND n2.n_name = 'GERMANY')
+        OR
+        (n1.n_name = 'GERMANY' AND n2.n_name = 'FRANCE')
+    )
+      AND l.l_shipdate BETWEEN DATE '1995-01-01' AND DATE '1996-12-31'
+) AS shipping
+GROUP BY supp_nation, cust_nation, l_year
+ORDER BY supp_nation, cust_nation, l_year""",
+
+    # ── Subquery / EXISTS ─────────────────────────────────────────────────────
+    "EXISTS — orders with large-discount items": """\
+SELECT o.o_orderkey, o.o_totalprice, o.o_orderdate
+FROM tpch.orders o
+WHERE EXISTS (
+    SELECT 1
+    FROM tpch.lineitem l
+    WHERE l.l_orderkey = o.o_orderkey
+      AND l.l_discount > 0.08
+      AND l.l_extendedprice > 50000
+)
+ORDER BY o.o_totalprice DESC
+LIMIT 50""",
+
+    "NOT IN — customers with no orders": """\
+SELECT c.c_custkey, c.c_name, c.c_acctbal
+FROM tpch.customer c
+WHERE c.c_custkey NOT IN (
+    SELECT DISTINCT o.o_custkey
+    FROM tpch.orders o
+    WHERE o.o_orderdate >= DATE '1993-01-01'
+)
+  AND c.c_acctbal > 0
+ORDER BY c.c_acctbal DESC
+LIMIT 30""",
+
+    # ── Window functions ──────────────────────────────────────────────────────
+    "Window — rank suppliers by revenue per nation": """\
+SELECT
+    n.n_name,
+    s.s_name,
+    SUM(l.l_extendedprice * (1 - l.l_discount)) AS revenue,
+    RANK() OVER (
+        PARTITION BY n.n_name
+        ORDER BY SUM(l.l_extendedprice * (1 - l.l_discount)) DESC
+    ) AS nation_rank
+FROM tpch.supplier s
+JOIN tpch.lineitem l ON l.l_suppkey  = s.s_suppkey
+JOIN tpch.nation   n ON s.s_nationkey = n.n_nationkey
+JOIN tpch.orders   o ON o.o_orderkey  = l.l_orderkey
+WHERE o.o_orderdate BETWEEN DATE '1993-01-01' AND DATE '1997-12-31'
+GROUP BY n.n_name, s.s_name
+ORDER BY n.n_name, nation_rank
+LIMIT 50""",
+
+    "Window — running total of order revenue": """\
+SELECT
+    o.o_orderdate,
+    o.o_totalprice,
+    SUM(o.o_totalprice) OVER (
+        ORDER BY o.o_orderdate
+        ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW
+    ) AS running_total
+FROM tpch.orders o
+WHERE o.o_orderdate >= DATE '1995-01-01'
+  AND o.o_orderdate <  DATE '1996-01-01'
+ORDER BY o.o_orderdate""",
+
+    # ── CTE ───────────────────────────────────────────────────────────────────
+    "CTE — top customers by segment": """\
+WITH ranked_customers AS (
+    SELECT
+        c.c_custkey,
+        c.c_name,
+        c.c_mktsegment,
+        SUM(o.o_totalprice) AS lifetime_value
+    FROM tpch.customer c
+    JOIN tpch.orders o ON c.c_custkey = o.o_custkey
+    GROUP BY c.c_custkey, c.c_name, c.c_mktsegment
+),
+segment_stats AS (
+    SELECT
+        c_mktsegment,
+        AVG(lifetime_value) AS avg_ltv,
+        PERCENTILE_CONT(0.9) WITHIN GROUP (ORDER BY lifetime_value) AS p90_ltv
+    FROM ranked_customers
+    GROUP BY c_mktsegment
+)
+SELECT
+    rc.c_name,
+    rc.c_mktsegment,
+    rc.lifetime_value,
+    ss.avg_ltv,
+    ROUND((rc.lifetime_value / ss.avg_ltv - 1) * 100, 1) AS pct_above_avg
+FROM ranked_customers rc
+JOIN segment_stats ss ON rc.c_mktsegment = ss.c_mktsegment
+WHERE rc.lifetime_value >= ss.p90_ltv
+ORDER BY rc.c_mktsegment, rc.lifetime_value DESC""",
 }
 
 # ---------------------------------------------------------------------------
