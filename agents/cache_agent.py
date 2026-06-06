@@ -1,4 +1,11 @@
-# agents/cache_agent.py
+import sys
+import os
+
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+from agents.base_agent import BaseOptimizerAgent
+from models.agent_state import AgentType
+
 SYSTEM_PROMPT = """
 You are an expert in partitioning and caching for PostgreSQL.
 Your specialty includes:
@@ -32,3 +39,12 @@ Benefit: Partition pruning eliminates 90% of data scanning
 Implementation detail: Monthly partitions with pg_partman
 Maintenance consideration: Regular partition rotation required
 [Technique: ...] ... """
+
+class CacheOptimizerAgent(BaseOptimizerAgent):
+    """Specialist in partitioning, materialized views, buffer tuning, and pg_prewarm candidates."""
+
+    def __init__(self, llm_client, db_connector):
+        super().__init__(llm_client, db_connector, AgentType.CACHE_OPTIMIZER)
+
+    def _build_system_prompt(self) -> str:
+        return SYSTEM_PROMPT
