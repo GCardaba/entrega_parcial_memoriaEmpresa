@@ -9,14 +9,17 @@
 ## Tabla de contenidos
 
 1. [Descripción general](#descripción-general)
-2. [Arquitectura del sistema](#arquitectura-del-sistema)
-3. [Requisitos previos](#requisitos-previos)
-4. [Instalación](#instalación)
-5. [Configuración](#configuración)
-6. [Uso](#uso)
-7. [Cómo funciona por dentro](#cómo-funciona-por-dentro)
-8. [Tests](#tests)
-9. [Estructura del proyecto](#estructura-del-proyecto)
+2. [Diagrama de flujo del pipeline](#diagrama-de-flujo-del-pipeline)
+3. [Diagrama del sistema de agentes](#diagrama-del-sistema-de-agentes)
+4. [Sistema de puntuación Trim-mean](#sistema-de-puntuación-trim-mean)
+5. [Arquitectura de componentes](#arquitectura-de-componentes)
+6. [Requisitos previos](#requisitos-previos)
+7. [Instalación](#instalación)
+8. [Configuración](#configuración)
+9. [Uso](#uso)
+10. [Cómo funciona por dentro](#cómo-funciona-por-dentro)
+11. [Tests](#tests)
+12. [Estructura del proyecto](#estructura-del-proyecto)
 
 ---
 
@@ -24,85 +27,221 @@
 
 El sistema recibe una consulta SQL arbitraria y devuelve la versión optimizada con mayor puntuación, junto con un informe detallado que explica qué cambios se han aplicado, por qué, y qué mejora de rendimiento se espera.
 
-El flujo completo pasa por **dos capas de agentes LLM** más **medición real con EXPLAIN ANALYZE** contra una instancia PostgreSQL 16 con el dataset TPC-H (escala SF=1: ~600K filas en `lineitem`, ~150K en `orders`, ~15K en `customer`).
+El flujo completo pasa por **dos capas de agentes LLM** (10 agentes en total) más **medición real con EXPLAIN ANALYZE** contra una instancia PostgreSQL 16 con el dataset TPC-H (escala SF=1: ~600K filas en `lineitem`, ~150K en `orders`, ~15K en `customer`).
 
 ---
 
-## Arquitectura del sistema
+## Diagrama de flujo del pipeline
 
-```
-Consulta SQL de entrada
-        │
-        ▼
-┌──────────────────────┐
-│   parse_query        │  → Obtiene schema + métricas baseline (EXPLAIN ANALYZE)
-└──────────┬───────────┘
-           │  5 agentes en paralelo
-           ▼
-┌──────────────────────────────────────────────────────────┐
-│  CAPA 1 — Agentes Optimizadores Especializados           │
-│                                                          │
-│  [Index]  [JOIN]  [Rewriter]  [CTE]  [Cache]            │
-│   ↓         ↓        ↓         ↓       ↓                │
-│          5 propuestas independientes                     │
-└──────────────────────────────────────────────────────────┘
-           │  5 master agents en paralelo
-           ▼
-┌──────────────────────────────────────────────────────────┐
-│  CAPA 2 — Master Agents (combinan + puntúan)             │
-│                                                          │
-│  [MA1]  [MA2]  [MA3]  [MA4]  [MA5]                      │
-│   ↓       ↓      ↓      ↓      ↓                        │
-│      5 propuestas pre-finales combinadas                 │
-└──────────────────────────────────────────────────────────┘
-           │
-           ▼
-┌──────────────────────┐
-│  evaluate_proposals  │  → EXPLAIN ANALYZE real (3 ejecuciones, media)
-└──────────┬───────────┘
-           │
-           ▼
-┌──────────────────────┐
-│  score_proposals     │  → Cada MA puntúa las 5 propuestas (0–10)
-│                      │    Trim-mean: descarta máx y mín, media del resto
-└──────────┬───────────┘
-           │
-           ▼
-┌──────────────────────┐
-│  select_winner       │  → La propuesta con mayor puntuación final
-└──────────┬───────────┘
-           │
-           ▼
-┌──────────────────────┐
-│  generate_report     │  → Informe con query ganadora, comparativa y explicaciones
-└──────────────────────┘
+El orquestador es un grafo LangGraph de 7 nodos. El estado completo (`SystemState`) fluye entre nodos como un diccionario plano.
+
+```mermaid
+flowchart TD
+    A([🔍 Consulta SQL de entrada])
+
+    B["**parse_query**\n─────────────────\nObtiene schema de TPC-H\nEXPLAIN ANALYZE → métricas baseline"]
+
+    subgraph PAR1 ["⚡  Ejecución paralela  ─  5 agentes simultáneos"]
+        direction LR
+        C1["Index\nOptimizer"]
+        C2["JOIN\nOptimizer"]
+        C3["Query\nRewriter"]
+        C4["CTE\nOptimizer"]
+        C5["Cache\nOptimizer"]
+    end
+
+    P1(["5 QueryProposal\nindependientes"])
+
+    subgraph PAR2 ["🧠  Ejecución paralela  ─  5 master agents simultáneos"]
+        direction LR
+        D1["Master\nAgent 1"]
+        D2["Master\nAgent 2"]
+        D3["Master\nAgent 3"]
+        D4["Master\nAgent 4"]
+        D5["Master\nAgent 5"]
+    end
+
+    P2(["5 propuestas\npre-finales"])
+
+    E["**evaluate_proposals**\n─────────────────\nEXPLAIN ANALYZE real\n3 ejecuciones por propuesta → media"]
+
+    F["**score_proposals**\n─────────────────\n5 MA × 5 propuestas = 25 puntuaciones\nTrim-mean por propuesta → puntuación final"]
+
+    G["**select_winner**\n─────────────────\nMáxima puntuación final"]
+
+    H["**generate_report**\n─────────────────\nQuery ganadora · comparativa · explicaciones"]
+
+    Z([✅ Resultado final])
+
+    A --> B --> PAR1 --> P1 --> PAR2 --> P2 --> E --> F --> G --> H --> Z
 ```
 
-### Agentes optimizadores (Capa 1)
+---
 
-| Agente | Especialidad |
-|--------|-------------|
-| **Index Optimizer** | Índices cubrientes, parciales y de bitmap |
-| **JOIN Optimizer** | Orden de joins, estrategias hash/merge/nested loop |
-| **Query Rewriter** | Reescritura estructural del SQL (eliminación de subconsultas, simplificación) |
-| **CTE Optimizer** | Materialización de CTEs, eliminación de subqueries correlacionadas |
-| **Cache Optimizer** | Patrones de acceso favorables al buffer pool de PostgreSQL |
+## Diagrama del sistema de agentes
 
-### Master Agents (Capa 2)
+### Capa 1 — Agentes Optimizadores Especializados
 
-Cada master agent tiene una perspectiva distinta para combinar propuestas y puntuar resultados:
+Cada agente recibe la query original + schema y produce una propuesta de optimización independiente.
 
-| Agent | Enfoque principal |
-|-------|------------------|
-| **MA1 — Performance First** | Tiempo (50%) + coste planificador (30%) + ratio de index scans (20%) |
-| **MA2 — Cache & I/O Aware** | Buffer hits (40%) + eliminación de seq scans (35%) + tiempo (25%) |
-| **MA3 — Structural Rewriter** | Filas procesadas (40%) + simplicidad del plan (30%) + tiempo (30%) |
-| **MA4 — Balanced Integrator** | Todas las métricas equilibradas; penaliza `risk_factor > 0.5` |
-| **MA5 — Conservative Validator** | Confianza (40%) + penalización de riesgo (30%) + tiempo (30%); veto si `risk_factor > 0.8` |
+```mermaid
+flowchart LR
+    Q["🔍 Query SQL\n+ Schema TPC-H"]
 
-### Sistema de puntuación (Trim-mean)
+    subgraph AGENTS ["CAPA 1 · Agentes Optimizadores  (asyncio.gather)"]
+        direction TB
+        A1["**Index Optimizer**\nÍndices cubrientes\nÍndices parciales\nBitmap Index Scan"]
+        A2["**JOIN Optimizer**\nOrden de joins\nHash / Merge / Nested Loop\nSelectividad"]
+        A3["**Query Rewriter**\nEliminación de subconsultas\nSimplificación estructural\nPredicados equivalentes"]
+        A4["**CTE Optimizer**\nMaterialización de CTEs\nSubqueries correlacionadas\nWith clauses"]
+        A5["**Cache Optimizer**\nBuffer pool de PostgreSQL\nPatrones de acceso secuencial\nWork_mem y shared_buffers"]
+    end
 
-Cada propuesta recibe 5 puntuaciones (una por master agent). Se descartan la máxima y la mínima, y se hace la media de las 3 restantes. La propuesta con mayor puntuación final es la ganadora.
+    subgraph PROPS ["5 QueryProposal independientes"]
+        direction TB
+        P1["Propuesta 1\noptimized_query\nexplanations\nconfidence_score"]
+        P2["Propuesta 2"]
+        P3["Propuesta 3"]
+        P4["Propuesta 4"]
+        P5["Propuesta 5"]
+    end
+
+    Q --> A1 & A2 & A3 & A4 & A5
+    A1 --> P1
+    A2 --> P2
+    A3 --> P3
+    A4 --> P4
+    A5 --> P5
+```
+
+### Capa 2 — Master Agents
+
+Cada Master Agent recibe las 5 propuestas, las combina según su estrategia y produce una propuesta pre-final propia.
+
+```mermaid
+flowchart LR
+    subgraph IN ["5 propuestas de Capa 1"]
+        direction TB
+        P1["Propuesta Index"]
+        P2["Propuesta JOIN"]
+        P3["Propuesta Rewriter"]
+        P4["Propuesta CTE"]
+        P5["Propuesta Cache"]
+    end
+
+    subgraph MA ["CAPA 2 · Master Agents  (asyncio.gather)"]
+        direction TB
+        M1["**MA1 · Performance First**\nTiempo 50% · Coste 30%\nIndex ratio 20%"]
+        M2["**MA2 · Cache & I/O Aware**\nBuffer hits 40%\nElim. seq scans 35% · t 25%"]
+        M3["**MA3 · Structural Rewriter**\nFilas procesadas 40%\nSimplicidad plan 30% · t 30%"]
+        M4["**MA4 · Balanced Integrator**\nTodas las métricas\nPenaliza risk > 0.5"]
+        M5["**MA5 · Conservative**\nConfianza 40% · Riesgo 30%\nVeto si risk > 0.8"]
+    end
+
+    subgraph OUT ["5 propuestas pre-finales"]
+        direction TB
+        R1["Combinada MA1"]
+        R2["Combinada MA2"]
+        R3["Combinada MA3"]
+        R4["Combinada MA4"]
+        R5["Combinada MA5"]
+    end
+
+    P1 & P2 & P3 & P4 & P5 --> M1 & M2 & M3 & M4 & M5
+    M1 --> R1
+    M2 --> R2
+    M3 --> R3
+    M4 --> R4
+    M5 --> R5
+```
+
+---
+
+## Sistema de puntuación Trim-mean
+
+Tras la evaluación real con `EXPLAIN ANALYZE`, los 5 Master Agents puntúan **cada una** de las 5 propuestas pre-finales (25 llamadas LLM en total). La puntuación final de cada propuesta es la **media recortada** (trim-mean): se descartan la puntuación más alta y la más baja, y se hace la media de las 3 restantes.
+
+```mermaid
+flowchart TD
+    subgraph PROP ["Propuesta pre-final (ejemplo: MA4)"]
+        direction LR
+        S1["MA1 puntúa:\n**7.5**"]
+        S2["MA2 puntúa:\n**9.2** ← máx"]
+        S3["MA3 puntúa:\n**6.8**"]
+        S4["MA4 puntúa:\n**8.1**"]
+        S5["MA5 puntúa:\n**4.3** ← mín"]
+    end
+
+    SORT["Ordenar: 4.3 · 6.8 · 7.5 · 8.1 · 9.2"]
+    TRIM["✂️  Descartar máximo y mínimo\n→ quedan: 6.8 · 7.5 · 8.1"]
+    AVG["Media de los 3 restantes\n(6.8 + 7.5 + 8.1) / 3 = **7.47**"]
+    WIN["Puntuación final: **7.47 / 10**"]
+
+    PROP --> SORT --> TRIM --> AVG --> WIN
+
+    subgraph COMPARE ["Comparativa final de las 5 propuestas"]
+        direction LR
+        W1["MA1: 4.97"]
+        W2["MA2: 4.63"]
+        W3["MA3: 6.73"]
+        W4["MA4: **7.20** 🏆"]
+        W5["MA5: 7.07"]
+    end
+
+    WIN --> COMPARE
+```
+
+---
+
+## Arquitectura de componentes
+
+```mermaid
+graph TB
+    subgraph INTERFACES ["Interfaces de usuario"]
+        UI["🖥️ Streamlit UI\nui/app.py\nlocalhost:8501"]
+        API["⚡ FastAPI REST\napi/main.py\nlocalhost:8000\nPOST /optimize\nGET /schema · /health · /explain"]
+    end
+
+    subgraph CORE ["Core — Orquestador LangGraph"]
+        WF["orchestrator/workflow.py\nStateGraph de 7 nodos\nEstado como dict plano"]
+    end
+
+    subgraph LAYER1 ["Capa 1 — Agentes Optimizadores"]
+        OA["agents/base_agent.py\nBaseOptimizerAgent\n+ 5 agentes especializados\nValidación SQL con EXPLAIN\nAuto-corrección LLM"]
+    end
+
+    subgraph LAYER2 ["Capa 2 — Master Agents"]
+        MA["agents/master_agents/\nBaseMasterAgent\n+ master_agent_1..5\nCombinación + Scoring\nTrim-mean en workflow.py"]
+    end
+
+    subgraph REPORT ["Reporting"]
+        RG["reporter/report_generator.py\nSummary · Winner · Explanations\nComparison table · Query diff"]
+    end
+
+    subgraph INFRA ["Infraestructura"]
+        DB["🐘 PostgreSQL 16\nHomebrew local\nDB: optimizer_db\nSchema: tpch\nDataset TPC-H SF=1"]
+        LLM["🤖 Anthropic API\nclaude-sonnet-4-6\nAsyncAnthropic\nJSON via prompt engineering"]
+    end
+
+    subgraph DATA ["Capa de datos"]
+        CONN["database/connector.py\nPostgreSQLConnector\nasyncpg · 1 conexión/llamada"]
+        PARSER["database/explain_parser.py\nEXPLAIN JSON → EvaluationMetrics"]
+        MODELS["models/agent_state.py\nPydantic v2\nQueryProposal · EvaluationResult\nSystemState · MasterAgentScore"]
+    end
+
+    UI -->|"llama directo\nsin servidor"| WF
+    API --> WF
+    WF --> OA
+    WF --> MA
+    WF --> RG
+    OA <-->|"messages.create()"| LLM
+    MA <-->|"messages.create()"| LLM
+    OA <-->|"execute_explain()"| CONN
+    WF <-->|"execute_explain_analyze()"| CONN
+    CONN <--> DB
+    CONN --> PARSER
+    OA & MA & WF & RG --> MODELS
+```
 
 ---
 
@@ -211,10 +350,20 @@ La respuesta del endpoint `/optimize` contiene:
       "optimization_strategy": "...",
       "confidence_score": 0.83,
       "final_score": 7.20,
-      "metrics": { "actual_time_ms": 26.2, "total_cost": 5298.3, ... }
+      "metrics": { "actual_time_ms": 26.2, "total_cost": 5298.3, "seq_scans": 1, "index_scans": 1 }
     },
-    "explanations": [...],
-    "comparison_table": [...]
+    "explanations": [
+      {
+        "technique": "Partial Covering Index on customer",
+        "reason": "Eliminates heap fetches for BUILDING segment",
+        "expected_benefit": "Reduces I/O by 60-70%",
+        "risk_factor": 0.1,
+        "limitations": ["Index maintenance on INSERT/UPDATE"]
+      }
+    ],
+    "comparison_table": [
+      { "rank": 1, "agent_id": "master_4", "final_score": 7.20, "actual_time_ms": 26.2, "time_improvement_pct": 20.6 }
+    ]
   }
 }
 ```
@@ -233,13 +382,13 @@ Todos los prompts del sistema están escritos en inglés para maximizar la consi
 
 ### Límites de rate de la API
 
-El tier gratuito de Anthropic tiene un límite de 30.000 tokens/minuto. La fase de puntuación (25 llamadas: 5 evaluaciones × 5 master agents) se ejecuta secuencialmente para no superarlo. Con una cuenta de pago, este límite desaparece y puede paralelizarse.
+El tier gratuito de Anthropic tiene un límite de 30.000 tokens/minuto. La fase de puntuación (25 llamadas: 5 evaluaciones × 5 master agents) se ejecuta secuencialmente para no superarlo. Con una cuenta de pago este límite desaparece y puede paralelizarse.
 
 ### Métricas de evaluación
 
 Se extraen del JSON de `EXPLAIN ANALYZE FORMAT JSON` de PostgreSQL 16:
 
-| Métrica | Fuente |
+| Métrica | Fuente en el JSON |
 |---------|--------|
 | `actual_time_ms` | `root["Execution Time"]` (nivel raíz) |
 | `total_cost` | `Plan.Total Cost` del nodo raíz |
@@ -266,7 +415,7 @@ venv/bin/python -m pytest tests/test_agents.py::test_invalid_llm_output_falls_ba
 |---------|------|-------------|
 | `test_explain_parser.py` | Unitario | No (usa fixture JSON capturado) |
 | `test_connector.py` | Integración | Sí |
-| `test_agents.py` | Unitario + integración | Sí (para sintaxis SQL) |
+| `test_agents.py` | Unitario + integración | Sí (validación de sintaxis SQL) |
 | `test_scoring_system.py` | Unitario | No |
 | `test_workflow.py` | Integración | Sí |
 
@@ -277,33 +426,33 @@ venv/bin/python -m pytest tests/test_agents.py::test_invalid_llm_output_falls_ba
 ```
 ├── agents/
 │   ├── base_agent.py            # BaseOptimizerAgent: LLM call, parsing, validación SQL
-│   ├── index_agent.py           # Agente especializado en índices
-│   ├── join_agent.py            # Agente especializado en JOINs
-│   ├── rewrite_agent.py         # Agente de reescritura estructural
-│   ├── cte_agent.py             # Agente de CTEs
-│   ├── cache_agent.py           # Agente de caché/buffers
+│   ├── index_agent.py
+│   ├── join_agent.py
+│   ├── rewrite_agent.py
+│   ├── cte_agent.py
+│   ├── cache_agent.py
 │   └── master_agents/
 │       ├── base_master_agent.py # BaseMasterAgent: combine + score + _parse_json
 │       ├── master_agent_1..5.py # Estrategias diferenciadas
 │       └── scoring_system.py    # Trim-mean
 ├── database/
-│   ├── connector.py             # PostgreSQLConnector (asyncpg, una conexión por llamada)
-│   └── explain_parser.py        # ExplainAnalyzeParser: JSON → EvaluationMetrics
+│   ├── connector.py             # PostgreSQLConnector (asyncpg)
+│   └── explain_parser.py        # EXPLAIN JSON → EvaluationMetrics
 ├── models/
-│   └── agent_state.py           # Pydantic models: QueryProposal, EvaluationResult, SystemState…
+│   └── agent_state.py           # Pydantic v2: QueryProposal, EvaluationResult, SystemState…
 ├── orchestrator/
 │   └── workflow.py              # LangGraph StateGraph(dict), 7 nodos
 ├── reporter/
-│   └── report_generator.py      # Dict final con summary, winner, comparison_table
+│   └── report_generator.py      # Dict final: summary, winner, comparison_table
 ├── api/
-│   └── main.py                  # FastAPI: POST /optimize, GET /schema, /health, /explain
+│   └── main.py                  # FastAPI: POST /optimize, GET /schema · /health · /explain
 ├── ui/
-│   └── app.py                   # Streamlit UI (llama al workflow directamente, sin API)
+│   └── app.py                   # Streamlit UI (llama al workflow directamente)
 ├── tests/
 │   └── conftest.py              # MockLLM (forma Anthropic), fixtures TPC-H
 ├── config/
 │   └── settings.py              # Variables de entorno centralizadas
-├── .env.example                 # Plantilla de configuración
+├── .env.example
 ├── requirements.txt
 ├── pytest.ini                   # asyncio_mode = auto
 └── CLAUDE.md                    # Guía para Claude Code
