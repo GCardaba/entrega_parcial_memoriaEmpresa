@@ -1,4 +1,7 @@
 .env
 __pycache__
+*.pyc
 venv
 data/tpch/tpch-dbgen
+.DS_Store
+.claude/
